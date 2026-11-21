@@ -1,0 +1,11 @@
+# Maxfiy sozlamalar — hech qachon GitHub'ga yuklanmasin
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+logs/
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.impeccable/
