@@ -155,10 +155,18 @@ function validateProduct(body, { partial }) {
   if (has('badge')) out.badge = String(body.badge || '').trim().slice(0, 16);
   if (has('size')) out.size = String(body.size || '').trim().slice(0, 20);
   if (has('weight')) out.weight = String(body.weight || '').trim().slice(0, 20);
-  if (has('image') || !partial) {
+  if (has('imageUpload')) {
+    // Telefondan yuklangan rasm (data URL) — bazada saqlanadi
+    const d = String(body.imageUpload || '');
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(d)) throw new Error('Rasm formati notoʻgʻri (JPEG, PNG yoki WebP)');
+    if (d.length > MAX_PRODUCT_IMAGE) throw new Error('Rasm juda katta');
+    out.imageData = d;
+    out.image = '';
+  } else if (has('image') || !partial) {
     const image = String(body.image || '').trim();
-    if (!/^(\/images\/[\w.-]+|https:\/\/\S+)$/.test(image)) throw new Error('Rasm manzili notoʻgʻri (https://… yoki /images/…)');
+    if (!/^(\/images\/[\w.-]+|https:\/\/\S+)$/.test(image)) throw new Error('Rasm tanlang yoki telefondan yuklang');
     out.image = image;
+    out.imageData = null; // tayyor rasm tanlansa — yuklangan rasm olib tashlanadi
   }
   if (has('categories')) {
     if (!Array.isArray(body.categories)) throw new Error('Kategoriyalar notoʻgʻri');
@@ -668,6 +676,7 @@ async function deleteCategory(req, res) {
 // ---------- Storislar ----------
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const MAX_STORY_IMAGE = 450 * 1024; // base64 uzunligi
+const MAX_PRODUCT_IMAGE = 450 * 1024;
 
 function validateStory(body, { partial }) {
   const out = {};
@@ -792,6 +801,20 @@ async function deleteStory(req, res) {
 }
 
 // Ommaviy: yuklangan storis rasmi
+async function productImage(req, res) {
+  try {
+    const data = await Product.imageData(String(req.params.id));
+    const m = data && /^data:(image\/[a-z]+);base64,(.+)$/.exec(data);
+    if (!m) return res.status(404).end();
+    res.set('Content-Type', m[1]);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable'); // manzilda ?v= bor
+    res.send(Buffer.from(m[2], 'base64'));
+  } catch (err) {
+    logger.error('Mahsulot rasmi xatosi', err);
+    res.status(500).end();
+  }
+}
+
 async function storyImage(req, res) {
   try {
     const data = await Story.imageData(Number(req.params.id));
@@ -824,6 +847,7 @@ async function deleteBranch(req, res) {
 }
 
 module.exports = {
+  productImage,
   deleteBranch,
   listStories,
   createStory,

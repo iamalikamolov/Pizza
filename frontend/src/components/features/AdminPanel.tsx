@@ -411,7 +411,10 @@ function MenuSection() {
 
   useEffect(load, [load]);
 
-  const images = useMemo(() => Array.from(new Set((products || []).map((p) => p.image))), [products]);
+  const images = useMemo(
+    () => Array.from(new Set((products || []).map((p) => p.image).filter((src) => !src.startsWith('/api/')))),
+    [products]
+  );
 
   const toggleActive = async (p: AdminProduct, value: boolean) => {
     setProducts((list) => list?.map((x) => (x.id === p.id ? { ...x, isActive: value } : x)) || null);
@@ -431,7 +434,7 @@ function MenuSection() {
       <h3 className="section-title">🍕 Mahsulotlar</h3>
       <div className="admin__toolbar">
         <span className="muted">{products ? `${products.length} ta mahsulot` : 'Yuklanmoqda…'}</span>
-        <Button onClick={() => setEditing({ id: null, data: { ...EMPTY, image: images[0] || '' } })}>+ Yangi pitsa</Button>
+        <Button onClick={() => setEditing({ id: null, data: { ...EMPTY, image: images[0] || '' } })}>+ Yangi mahsulot</Button>
       </div>
 
       {error && <div className="form-error">⚠️ {error}</div>}
@@ -482,13 +485,34 @@ function ProductEditor({ state, categories, images, onClose, onSaved }: EditorPr
   const [ingredientsText, setIngredientsText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [upload, setUpload] = useState<string | null>(null); // telefondan tanlangan rasm (data URL)
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!state) return;
     setForm(state.data);
     setIngredientsText((state.data.ingredients || []).join('\n'));
+    setUpload(null);
     setError('');
   }, [state]);
+
+  const onFile = async (file?: File) => {
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      let data = await resizeToDataUrl(file, 900, 0.82);
+      if (data.length > 440 * 1024) data = await resizeToDataUrl(file, 700, 0.72);
+      setUpload(data);
+      setForm((f) => ({ ...f, image: data }));
+    } catch {
+      setError('Rasmni oʻqib boʻlmadi');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
 
   const set = <K extends keyof ProductInput>(key: K, value: ProductInput[K]) => setForm((f) => ({ ...f, [key]: value }));
   const num = (v: string) => Number(v.replace(/\D/g, '')) || 0;
@@ -502,7 +526,6 @@ function ProductEditor({ state, categories, images, onClose, onSaved }: EditorPr
       price: form.price,
       oldPrice: form.oldPrice,
       badge: form.badge,
-      image: form.image,
       categories: form.categories,
       size: form.size,
       weight: form.weight,
@@ -510,6 +533,10 @@ function ProductEditor({ state, categories, images, onClose, onSaved }: EditorPr
       i18n: form.i18n,
       ingredients: ingredientsText.split('\n').map((s) => s.trim()).filter(Boolean),
     };
+    // Rasm: yangi yuklangan bo'lsa — imageUpload, aks holda tanlangan tayyor rasm.
+    // Avval yuklangan rasm (/api/...) o'zgarmagan bo'lsa — rasm yuborilmaydi.
+    if (upload && form.image === upload) payload.imageUpload = upload;
+    else if (!form.image?.startsWith('/api/')) payload.image = form.image;
     try {
       if (state?.id) await api.admin.updateProduct(state.id, payload);
       else await api.admin.createProduct(payload);
@@ -525,7 +552,7 @@ function ProductEditor({ state, categories, images, onClose, onSaved }: EditorPr
     <BottomSheet
       open={Boolean(state)}
       onClose={onClose}
-      title={state?.id ? 'Tahrirlash' : 'Yangi pitsa'}
+      title={state?.id ? 'Tahrirlash' : 'Yangi mahsulot'}
       footer={
         <div className="sticky-cta sticky-cta--column">
           {error && <div className="form-error">⚠️ {error}</div>}
@@ -592,14 +619,32 @@ function ProductEditor({ state, categories, images, onClose, onSaved }: EditorPr
       </div>
 
       <div className="field">
-        <span className="field__label">Rasm</span>
+        <span className="field__label">Rasm — 📷 bosib telefoningizdan yuklang yoki tayyor rasmni tanlang</span>
         <div className="admin-editor__images">
+          <button type="button" className="upload-btn" onClick={() => fileRef.current?.click()} disabled={uploading} aria-label="Rasm yuklash">
+            {uploading ? '…' : '📷'}
+          </button>
+          {upload && (
+            <button type="button" className={cn('admin-editor__img', form.image === upload && 'is-active')} onClick={() => set('image', upload)}>
+              <img src={upload} alt="" />
+            </button>
+          )}
+          {state?.data.image?.startsWith('/api/') && (
+            <button
+              type="button"
+              className={cn('admin-editor__img', form.image === state.data.image && 'is-active')}
+              onClick={() => set('image', state.data.image)}
+            >
+              <img src={state.data.image} alt="" />
+            </button>
+          )}
           {images.map((src) => (
             <button key={src} type="button" className={cn('admin-editor__img', form.image === src && 'is-active')} onClick={() => set('image', src)}>
-              <img src={src} alt="" />
+              <img src={thumb(src)} alt="" />
             </button>
           ))}
         </div>
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
       </div>
       <Input
         label="yoki rasm havolasi (https://…)"
@@ -771,7 +816,7 @@ function BannerEditor({ state, products, categories, onClose, onSaved }: BannerE
 
   const set = <K extends keyof Banner>(key: K, value: Banner[K]) => setForm((f) => ({ ...f, [key]: value }));
   const images = useMemo(
-    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])),
+    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])).filter((src) => !src.startsWith('/api/')),
     [products]
   );
 
@@ -1950,7 +1995,7 @@ function StoryEditor({ state, onClose, onSaved }: { state: AdminStory | 'new' | 
 
   const set = <K extends keyof StoryInput>(k: K, v: StoryInput[K]) => setForm((f) => ({ ...f, [k]: v }));
   const images = useMemo(
-    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])),
+    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])).filter((src) => !src.startsWith('/api/')),
     [products]
   );
 

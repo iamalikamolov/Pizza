@@ -312,7 +312,7 @@ export type ProductInput = Partial<
     AdminProduct,
     'name' | 'description' | 'image' | 'categories' | 'oldPrice' | 'price' | 'badge' | 'size' | 'weight' | 'ingredients' | 'isActive' | 'coinPrice' | 'i18n'
   >
->;
+> & { imageUpload?: string };
 
 export const api = {
   getCatalog: (lang: string) => request<Catalog>(`/catalog?lang=${lang}`),

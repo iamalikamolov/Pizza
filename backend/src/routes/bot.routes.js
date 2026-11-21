@@ -47,6 +47,7 @@ function registerApiRoutes(app) {
   api.post('/branches/detect', cartController.detectBranch);
   api.get('/qr/table/:branchId/:table.png', adminController.tableQr);
   api.get('/stories/:id/image', adminController.storyImage);
+  api.get('/products/:id/image', adminController.productImage);
   api.get('/addresses', apiAuth, profileController.listAddresses);
   api.post('/addresses', apiAuth, profileController.createAddress);
   api.patch('/addresses/:id', apiAuth, profileController.updateAddress);
