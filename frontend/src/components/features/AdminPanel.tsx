@@ -807,18 +807,41 @@ function BannerEditor({ state, products, categories, onClose, onSaved }: BannerE
   const [form, setForm] = useState<Partial<Banner>>(EMPTY_BANNER);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [upload, setUpload] = useState<string | null>(null); // telefondan tanlangan rasm (data URL)
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!state) return;
     setForm(state.data);
+    setUpload(null);
     setError('');
   }, [state]);
 
   const set = <K extends keyof Banner>(key: K, value: Banner[K]) => setForm((f) => ({ ...f, [key]: value }));
+  // Mahsulotlarga yuklangan rasmlar ham reklamada ishlatilsa bo'ladi
   const images = useMemo(
-    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])).filter((src) => !src.startsWith('/api/')),
+    () => Array.from(new Set(['/images/hero.jpg', '/images/promo.jpg', '/images/onboarding.jpg', ...products.map((p) => p.image)])),
     [products]
   );
+  const ownUpload = state?.data.image?.startsWith('/api/banners/') ? state.data.image : null;
+
+  const onFile = async (file?: File) => {
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      let data = await resizeToDataUrl(file, 1080, 0.8);
+      if (data.length > 440 * 1024) data = await resizeToDataUrl(file, 800, 0.7);
+      setUpload(data);
+      setForm((f) => ({ ...f, image: data }));
+    } catch {
+      setError('Rasmni oʻqib boʻlmadi');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
 
   const action = form.action || 'catalog';
   const actionType = action.startsWith('category:')
@@ -834,18 +857,20 @@ function BannerEditor({ state, products, categories, onClose, onSaved }: BannerE
   const save = async () => {
     setSaving(true);
     setError('');
-    const payload: Partial<Banner> = {
+    const payload: Partial<Banner> & { imageUpload?: string } = {
       placement: form.placement,
       kicker: form.kicker,
       title: form.title,
       subtitle: form.subtitle,
-      image: form.image,
       ctaLabel: form.ctaLabel,
       action: form.action,
       theme: form.theme,
       details: form.details,
       i18n: form.i18n,
     };
+    // Rasm: yangi yuklangan bo'lsa — imageUpload; bannerning o'z yuklangan rasmi o'zgarmagan bo'lsa — yuborilmaydi
+    if (upload && form.image === upload) payload.imageUpload = upload;
+    else if (!(ownUpload && form.image === ownUpload)) payload.image = form.image;
     try {
       if (state?.id) await api.admin.updateBanner(state.id, payload);
       else await api.admin.createBanner(payload);
@@ -996,14 +1021,28 @@ function BannerEditor({ state, products, categories, onClose, onSaved }: BannerE
       </div>
 
       <div className="field">
-        <span className="field__label">Rasm</span>
+        <span className="field__label">Rasm — 📷 bosib telefoningizdan yuklang yoki tayyor rasmni tanlang</span>
         <div className="admin-editor__images">
+          <button type="button" className="upload-btn" onClick={() => fileRef.current?.click()} disabled={uploading} aria-label="Rasm yuklash">
+            {uploading ? '…' : '📷'}
+          </button>
+          {upload && (
+            <button type="button" className={cn('admin-editor__img', form.image === upload && 'is-active')} onClick={() => set('image', upload)}>
+              <img src={upload} alt="" />
+            </button>
+          )}
+          {ownUpload && (
+            <button type="button" className={cn('admin-editor__img', form.image === ownUpload && 'is-active')} onClick={() => set('image', ownUpload)}>
+              <img src={ownUpload} alt="" />
+            </button>
+          )}
           {images.map((src) => (
             <button key={src} type="button" className={cn('admin-editor__img', form.image === src && 'is-active')} onClick={() => set('image', src)}>
-              <img src={src} alt="" />
+              <img src={thumb(src)} alt="" />
             </button>
           ))}
         </div>
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
       </div>
       <Input
         label="yoki rasm havolasi (https://…)"

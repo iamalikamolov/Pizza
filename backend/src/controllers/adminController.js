@@ -259,10 +259,21 @@ function validateBanner(body, { partial }) {
     if (!ACTION_RE.test(action)) throw new Error('Tugma harakati notoʻgʻri');
     out.action = action;
   }
-  if (has('image') || !partial) {
+  if (has('imageUpload')) {
+    // Telefondan yuklangan rasm (data URL) — bazada saqlanadi
+    const d = String(body.imageUpload || '');
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(d)) throw new Error('Rasm formati notoʻgʻri (JPEG, PNG yoki WebP)');
+    if (d.length > MAX_PRODUCT_IMAGE) throw new Error('Rasm juda katta');
+    out.imageData = d;
+    out.image = '';
+  } else if (has('image') || !partial) {
+    // Tayyor rasm, havola yoki mahsulotga yuklangan rasm
     const image = text('image', 500);
-    if (!/^(\/images\/[\w.-]+|https:\/\/\S+)$/.test(image)) throw new Error('Rasm manzili notoʻgʻri (https://… yoki /images/…)');
+    if (!/^(\/images\/[\w.-]+|https:\/\/\S+|\/api\/products\/[\w%-]+\/image(\?v=\d+)?)$/.test(image)) {
+      throw new Error('Rasm tanlang yoki telefondan yuklang');
+    }
     out.image = image;
+    out.imageData = null; // tayyor rasm tanlansa — yuklangan rasm olib tashlanadi
   }
   if (has('details')) out.details = String(body.details || '').trim().slice(0, 2000);
   if (has('i18n')) out.i18n = cleanI18n(body.i18n, ['kicker', 'title', 'subtitle', 'ctaLabel', 'details']);
@@ -801,6 +812,23 @@ async function deleteStory(req, res) {
 }
 
 // Ommaviy: yuklangan storis rasmi
+async function sendDataImage(res, data) {
+  const m = data && /^data:(image\/[a-z]+);base64,(.+)$/.exec(data);
+  if (!m) return res.status(404).end();
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', 'public, max-age=31536000, immutable'); // manzilda ?v= bor
+  res.send(Buffer.from(m[2], 'base64'));
+}
+
+async function bannerImage(req, res) {
+  try {
+    await sendDataImage(res, await Banner.imageData(req.params.id));
+  } catch (err) {
+    logger.error('Banner rasmi xatosi', err);
+    res.status(500).end();
+  }
+}
+
 async function productImage(req, res) {
   try {
     const data = await Product.imageData(String(req.params.id));
@@ -847,6 +875,7 @@ async function deleteBranch(req, res) {
 }
 
 module.exports = {
+  bannerImage,
   productImage,
   deleteBranch,
   listStories,

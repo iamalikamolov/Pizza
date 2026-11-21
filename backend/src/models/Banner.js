@@ -54,7 +54,10 @@ function toBanner(r) {
     kicker: r.kicker,
     title: r.title,
     subtitle: r.subtitle,
-    image: r.image,
+    // Yuklangan rasm bazada — /api/banners/:id/image orqali beriladi
+    image: (r.has_upload ?? Boolean(r.image_data))
+      ? `/api/banners/${r.id}/image?v=${new Date(r.updated_at).getTime()}`
+      : r.image,
     ctaLabel: r.cta_label,
     action: r.action,
     theme: r.theme,
@@ -78,7 +81,12 @@ const FIELD_MAP = {
   i18n: 'i18n',
   isActive: 'is_active',
   sortOrder: 'sort_order',
+  imageData: 'image_data',
 };
+
+// image_data (katta matn) keshga yuklanmaydi — faqat bor-yo'qligi
+const COLUMNS = `id, placement, kicker, title, subtitle, image, cta_label, action, theme, details, i18n, is_active,
+  sort_order, updated_at, (image_data IS NOT NULL) AS has_upload`;
 
 const Banner = {
   PLACEMENTS: ['hero', 'bottom'],
@@ -104,6 +112,7 @@ const Banner = {
     `);
     await db.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''");
     await db.query("ALTER TABLE banners ADD COLUMN IF NOT EXISTS i18n JSONB NOT NULL DEFAULT '{}'");
+    await db.query('ALTER TABLE banners ADD COLUMN IF NOT EXISTS image_data TEXT');
     const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM banners');
     if (rows[0].n === 0) {
       for (const [i, b] of SEED.entries()) await this.create({ ...b, sortOrder: i }, { reload: false });
@@ -115,7 +124,7 @@ const Banner = {
   },
 
   async reload() {
-    const { rows } = await db.query('SELECT * FROM banners ORDER BY sort_order, id');
+    const { rows } = await db.query(`SELECT ${COLUMNS} FROM banners ORDER BY sort_order, id`);
     cache = rows.map(toBanner);
     return cache;
   },
@@ -132,14 +141,19 @@ const Banner = {
     return cache.find((b) => b.id === Number(id)) || null;
   },
 
+  async imageData(id) {
+    const { rows } = await db.query('SELECT image_data FROM banners WHERE id = $1', [Number(id)]);
+    return rows[0]?.image_data || null;
+  },
+
   async create(data, { reload = true } = {}) {
     const { rows: maxRows } = await db.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM banners');
     const { rows } = await db.query(
-      `INSERT INTO banners (placement, kicker, title, subtitle, image, cta_label, action, theme, sort_order, details, i18n)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [data.placement, data.kicker || '', data.title, data.subtitle || '', data.image, data.ctaLabel || 'Buyurtma berish',
+      `INSERT INTO banners (placement, kicker, title, subtitle, image, cta_label, action, theme, sort_order, details, i18n, image_data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING ${COLUMNS}`,
+      [data.placement, data.kicker || '', data.title, data.subtitle || '', data.image || '', data.ctaLabel || 'Buyurtma berish',
         data.action || 'catalog', data.theme || 'red', data.sortOrder ?? maxRows[0].n, data.details || '',
-        JSON.stringify(data.i18n || {})]
+        JSON.stringify(data.i18n || {}), data.imageData || null]
     );
     if (reload) await this.reload();
     return toBanner(rows[0]);
@@ -155,7 +169,7 @@ const Banner = {
     }
     if (!sets.length) return this.findById(id);
     const { rows } = await db.query(
-      `UPDATE banners SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      `UPDATE banners SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1 RETURNING ${COLUMNS}`,
       values
     );
     await this.reload();
